@@ -31,7 +31,7 @@ static void usage(void)
  * Global variables used for parser main's command line params.
  */
 static const char *opt_extract_file = NULL, *opt_ddr = NULL;
-static const char *opt_out_dir = NULL, *opt_out_pack = NULL;
+static const char *opt_out_dir = NULL, *opt_out = NULL;
 static int opt_extract = 0;
 #define OUT_DIR (!opt_out_dir ? "." : opt_out_dir)
 
@@ -386,7 +386,7 @@ static int extract_packed_image_file(const char *packed)
 
 static int pack_images(struct image *imgs, int img_num)
 {
-	FILE *out_pack = fopen(opt_out_pack, "wb+");
+	FILE *out_pack = fopen(opt_out, "wb+");
 	uint32_t aligned_length = 0;
 
 	struct pack_header header;
@@ -394,7 +394,7 @@ static int pack_images(struct image *imgs, int img_num)
 	int n;
 
 	if (!out_pack) {
-		fprintf(stderr, "Open %s failed: %m\n", opt_out_pack);
+		fprintf(stderr, "Open %s failed: %m\n", opt_out);
 		return -1;
 	}
 
@@ -409,7 +409,7 @@ static int pack_images(struct image *imgs, int img_num)
 
 		if (load_image(img) < 0) {
 			fclose(out_pack);
-			remove(opt_out_pack);
+			remove(opt_out);
 			return -1;
 		}
 		aligned_length += ALIGNED_LENGTH(img->length);
@@ -483,7 +483,7 @@ int main(int argc, char *argv[])
 			break;
 
 		case 'o':
-			opt_out_pack = argv[++i];
+			opt_out = argv[++i];
 			break;
 
 		case 'O':
@@ -539,7 +539,7 @@ int main(int argc, char *argv[])
 	}
 
 	if (img_num > 0) {
-		if (!opt_out_pack) {
+		if (!opt_out) {
 			fprintf(stderr, "Pack images should add -o param to "
 					"to select the target's name.\n");
 			goto _exit;
