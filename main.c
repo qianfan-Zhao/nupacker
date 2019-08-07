@@ -12,7 +12,21 @@
 
 #define NUPACKER_VERSION	"1.00"
 #define PACK_ALIGN		(64 * 1024)
-#define ALIGNED_LENGTH(x)	((((x) + PACK_ALIGN - 1) / PACK_ALIGN) * PACK_ALIGN)
+#define ALIGN(s, a)		(((s) + (a) - 1) / (a) * (a))
+#define ALIGNED_LENGTH(x)	ALIGN(x, PACK_ALIGN)
+
+#define u32_little_endian(a, b, c, d) ( 			\
+				(((a) & 0xff) <<  0) |		\
+				(((b) & 0xff) <<  8) |		\
+				(((c) & 0xff) << 16) |		\
+				(((d) & 0xff) << 24) 		\
+				)
+#define put_u32_little_endian(p, u) do {			\
+				*p++ = ((u) >>  0) & 0xff;	\
+				*p++ = ((u) >>  8) & 0xff;	\
+				*p++ = ((u) >> 16) & 0xff;	\
+				*p++ = ((u) >> 24) & 0xff;	\
+} while (0)
 
 static void usage(void)
 {
@@ -24,6 +38,10 @@ static void usage(void)
 	fprintf(stderr, " [-data which_dir/rootfs.ubi@0x800000]\n");
 	fprintf(stderr, " -o which_dir/pack.bin: Pack images\n");
 	fprintf(stderr, "nupacker -e which_dir/pack.bin [-O dir]: Extract packed image\n");
+	fprintf(stderr, "nupacket -t ddr.ini [-o ddr.bin]:\n");
+	fprintf(stderr, "nupacket -t ddr.bin [-o ddr.ini]:\n");
+	fprintf(stderr, "  Translate ddr configuration between ini and bin\n");
+	fprintf(stderr, "  Write translated data to stdout default\n");
 	fprintf(stderr, "VERSION: %s\n", NUPACKER_VERSION);
 }
 
@@ -32,6 +50,7 @@ static void usage(void)
  */
 static const char *opt_extract_file = NULL, *opt_ddr = NULL;
 static const char *opt_out_dir = NULL, *opt_out = NULL;
+static const char *opt_ddr_translate = NULL;
 static int opt_extract = 0;
 #define OUT_DIR (!opt_out_dir ? "." : opt_out_dir)
 
@@ -59,6 +78,165 @@ static char *load_alloc_file(FILE *fp, long *length)
 	fread(m, 1, l, fp);
 	*length = l;
 	return m;
+}
+
+/*
+ * Translate ddr configuration file.
+ * Binary format:
+ * 55 AA 55 AA + item number(4 Bytes) + items + padding
+ */
+static const uint32_t ddr_bin_header = 0xaa55aa55;
+
+static char *translate_ddr_ini(const char *f_ini, long *length)
+{
+	FILE *fp_ini = fopen(f_ini, "r");
+	char *p, *bin = NULL;
+	int size, items = 0;
+
+	if (!fp_ini) {
+		fprintf(stderr, "Open %s failed: %m\n", f_ini);
+		return NULL;
+	}
+
+	for (int i = 0; i < 2; i++) {
+		unsigned int addr, value;
+
+		while (!feof(fp_ini)) {
+			/* format: 0xB0000220=0x01000000 */
+			if (fscanf(fp_ini, "0x%X=0x%X\n", &addr, &value) != 2) {
+				fprintf(stderr, "Parse %s failed in %d lines\n",
+						f_ini, items + 1);
+				if (bin) {
+					free(bin);
+					bin = NULL;
+				}
+				goto _done;
+			}
+
+			if (i == 0) { /* The first time scan each line */
+				++items;
+			} else { /* The second time translate to binary */
+				put_u32_little_endian(p, addr);
+				put_u32_little_endian(p, value);
+			}
+		}
+
+		if (i == 0) { /* Parse done, alloc memory */
+			size = sizeof(ddr_bin_header) + 4 + items * 8;
+			size = ALIGN(size, 16);
+
+			if (!(bin = malloc(size))) {
+				fprintf(stderr, "No enough memory\n");
+				goto _done;
+			}
+
+			/* clean data and padding */
+			memset(bin, 0, size);
+
+			p = bin;
+			put_u32_little_endian(p, ddr_bin_header);
+			put_u32_little_endian(p, items);
+		}
+
+		fseek(fp_ini, 0, SEEK_SET);
+	}
+	*length = size;
+
+_done:
+	fclose(fp_ini);
+	return bin;
+}
+
+static int translate_ddr_ini2bin(const char *f_ini, const char *f_bin)
+{
+	long length = 0;
+	char *bin;
+	int ret = -1;
+
+	if ((bin = translate_ddr_ini(f_ini, &length))) {
+		FILE *fp_out = stdout;
+
+		if (f_bin && !(fp_out = fopen(f_bin, "wb+"))) {
+			fprintf(stderr, "Open/Create %s failed: %m\n", f_bin);
+		} else {
+			fwrite(bin, 1, length, fp_out);
+			ret = 0;
+		}
+
+		if (f_bin)
+			fclose(fp_out);
+		free(bin);
+	}
+
+	return ret;
+}
+
+static int translate_ddr_bin2ini(const char *f_bin, const char *f_ini)
+{
+	FILE *fp_bin = fopen(f_bin, "rb"), *fp_ini = stdout;
+	int i = 0, items = 0, ret = -1;
+	long length = 0;
+	char *p, *bin;
+
+	if (!fp_bin) {
+		fprintf(stderr, "Open %s failed: %m\n", f_bin);
+		return ret;
+	}
+
+	if (f_ini && !(fp_ini = fopen(f_ini, "w+"))) {
+		fprintf(stderr, "Open/Create %s failed: %m", f_ini);
+		fclose(fp_bin);
+		return ret;
+	}
+
+	if (!(bin = load_alloc_file(fp_bin, &length)))
+		goto _close;
+
+	uint32_t header = u32_little_endian(bin[0], bin[1], bin[2], bin[3]);
+	if (header != ddr_bin_header) {
+		fprintf(stderr, "Invalid header: %X\n", header);
+		goto _free;
+	}
+
+	items = u32_little_endian(bin[4], bin[5], bin[6], bin[7]);
+	long l = items * 8 + sizeof(ddr_bin_header) + 4;
+	if (l > length) {
+		fprintf(stderr, "Length too larger: %X%X%X%X\n", bin[4],
+				bin[5], bin[6], bin[7]);
+		goto _free;
+	}
+
+	for (i = 0, p = bin + 8; i < items; i++, p += 8) {
+		unsigned int addr = u32_little_endian(p[0], p[1], p[2], p[3]);
+		unsigned int val  = u32_little_endian(p[4], p[5], p[6], p[7]);
+
+		fprintf(fp_ini, "0x%08X=0x%08X\n", addr, val);
+	}
+	ret = 0;
+
+_free:
+	free(bin);
+_close:
+	fclose(fp_bin);
+	if (f_ini)
+		fclose(fp_ini);
+
+	return ret;
+}
+
+static int translate_ddr(const char *in, const char *out)
+{
+	const char *suffix = &in[strlen(in) - strlen(".bin")];
+
+	if (strlen(in) > strlen("1.bin")) {
+		if (!strncmp(suffix, ".bin", 4))
+			return translate_ddr_bin2ini(in, out);
+		else if (!strncmp(suffix, ".ini", 4))
+			return translate_ddr_ini2bin(in, out);
+	}
+
+	fprintf(stderr, "Unknow ddr config file type: %s\n", in);
+	return -1;
 }
 
 struct image {
@@ -527,7 +705,20 @@ int main(int argc, char *argv[])
 			img = &imgs[img_num];
 
 			break;
+
+		case 't':
+			if (!argv[i + 1]) {
+				fprintf(stderr, "%s need a param\n", argv[i]);
+				goto _exit;
+			}
+			opt_ddr_translate = argv[++i];
+			break;
 		}
+	}
+
+	if (opt_ddr_translate) {
+		ret = translate_ddr(opt_ddr_translate, opt_out);
+		goto _exit;
 	}
 
 	if (opt_extract) {
