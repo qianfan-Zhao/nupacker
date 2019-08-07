@@ -31,7 +31,7 @@
 static void usage(void)
 {
 	fprintf(stderr, "nupacker -i pack.bin: Show packed image's information\n");
-	fprintf(stderr, "nupacker -ddr which_dir/ddr.bin\n");
+	fprintf(stderr, "nupacker -ddr which_dir/ddr.ini\n");
 	fprintf(stderr, " -spl which_dir/u-boot-spl.bin@0,exec=0x200\n");
 	fprintf(stderr, " [-data which_dir/u-boot.bin@0x100000]\n");
 	fprintf(stderr, " [-data which_dir/uImage_dtb.bin@0x200000]\n");
@@ -343,21 +343,15 @@ static int load_image_spl(struct image *img)
 {
 	long glue_length, ddr_length, spl_length;
 	struct pack_spl_header header;
-	FILE *fp_ddr, *fp_spl;
 	char *ddr, *spl;
+	FILE *fp_spl;
 
 	if (!(fp_spl = fopen(img->filename, "rb"))) {
 		fprintf(stderr, "Open %s failed: %m\n", img->filename);
 		return -1;
 	}
 
-	if (!(fp_ddr = fopen(opt_ddr, "rb"))) {
-		fprintf(stderr, "Open %s failed: %m\n", opt_ddr);
-		fclose(fp_spl);
-		return -1;
-	}
-
-	ddr = load_alloc_file(fp_ddr, &ddr_length);
+	ddr = translate_ddr_ini(opt_ddr, &ddr_length);
 	spl = load_alloc_file(fp_spl, &spl_length);
 
 	if (ddr && spl) {
@@ -378,7 +372,6 @@ static int load_image_spl(struct image *img)
 	}
 
 	fclose(fp_spl);
-	fclose(fp_ddr);
 	free(spl);
 	free(ddr);
 
