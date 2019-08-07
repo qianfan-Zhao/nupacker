@@ -7,21 +7,25 @@ Usage:
 
 ```
 nupacker -i pack.bin: Show packed image's information
-nupacker -ddr which_dir/ddr.bin
+nupacker -ddr which_dir/ddr.ini
  -spl which_dir/u-boot-spl.bin@0,exec=0x200
  [-data which_dir/u-boot.bin@0x100000]
  [-data which_dir/uImage_dtb.bin@0x200000]
  [-data which_dir/rootfs.ubi@0x800000]
  -o which_dir/pack.bin: Pack images
 nupacker -e which_dir/pack.bin [-O dir]: Extract packed image
-VERSION: 1.00
+nupacket -t ddr.ini [-o ddr.bin]:
+nupacket -t ddr.bin [-o ddr.ini]:
+  Translate ddr configuration between ini and bin
+  Write translated data to stdout default
+VERSION: 1.01
 ```
 
 Example 1: Create a packed image:
 
 ```
 $ nupacker -spl u-boot-spl.bin@0,exec=0x200 \
-		-ddr nuc972_ddr.bin \
+		-ddr nuc972_ddr.ini \
 		-data u-boot.bin@0x100000 \
 		-data kernel.bin@0x200000 \
 		-data rootfs.bin@0x800000 -o xxx.pack.bin
