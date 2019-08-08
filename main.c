@@ -65,18 +65,26 @@ static long file_length(FILE *fp)
 	return length;
 }
 
-static char *load_alloc_file(FILE *fp, long *length)
+static char *load_alloc_file(const char *filename, const char *flag, long *length)
 {
-	long l = file_length(fp);
+	FILE *fp = fopen(filename, flag);
 	char *m = NULL;
 
-	if (! (m = malloc(sizeof(char) * l))) {
-		fprintf(stderr, "Failed to alloc %ld bytes memory.\n", l);
+	if (!fp) {
+		fprintf(stderr, "Open %s failed: %m\n", filename);
 		return m;
 	}
 
+	long l = file_length(fp);
+	if (! (m = malloc(sizeof(char) * l))) {
+		fprintf(stderr, "Failed to alloc %ld bytes memory.\n", l);
+		goto _done;
+	}
 	fread(m, 1, l, fp);
 	*length = l;
+
+_done:
+	fclose(fp);
 	return m;
 }
 
@@ -173,23 +181,17 @@ static int translate_ddr_ini2bin(const char *f_ini, const char *f_bin)
 
 static int translate_ddr_bin2ini(const char *f_bin, const char *f_ini)
 {
-	FILE *fp_bin = fopen(f_bin, "rb"), *fp_ini = stdout;
+	FILE *fp_ini = !f_ini ? stdout : fopen(f_ini, "w+");
 	int i = 0, items = 0, ret = -1;
 	long length = 0;
 	char *p, *bin;
 
-	if (!fp_bin) {
-		fprintf(stderr, "Open %s failed: %m\n", f_bin);
-		return ret;
-	}
-
-	if (f_ini && !(fp_ini = fopen(f_ini, "w+"))) {
+	if (!fp_ini) {
 		fprintf(stderr, "Open/Create %s failed: %m", f_ini);
-		fclose(fp_bin);
 		return ret;
 	}
 
-	if (!(bin = load_alloc_file(fp_bin, &length)))
+	if (!(bin = load_alloc_file(f_bin, "rb", &length)))
 		goto _close;
 
 	uint32_t header = u32_little_endian(bin[0], bin[1], bin[2], bin[3]);
@@ -217,7 +219,6 @@ static int translate_ddr_bin2ini(const char *f_bin, const char *f_ini)
 _free:
 	free(bin);
 _close:
-	fclose(fp_bin);
 	if (f_ini)
 		fclose(fp_ini);
 
@@ -344,15 +345,9 @@ static int load_image_spl(struct image *img)
 	long glue_length, ddr_length, spl_length;
 	struct pack_spl_header header;
 	char *ddr, *spl;
-	FILE *fp_spl;
-
-	if (!(fp_spl = fopen(img->filename, "rb"))) {
-		fprintf(stderr, "Open %s failed: %m\n", img->filename);
-		return -1;
-	}
 
 	ddr = translate_ddr_ini(opt_ddr, &ddr_length);
-	spl = load_alloc_file(fp_spl, &spl_length);
+	spl = load_alloc_file(img->filename, "rb", &spl_length);
 
 	if (ddr && spl) {
 		glue_length = ddr_length + spl_length + sizeof(header);
@@ -371,7 +366,6 @@ static int load_image_spl(struct image *img)
 		}
 	}
 
-	fclose(fp_spl);
 	free(spl);
 	free(ddr);
 
@@ -380,23 +374,15 @@ static int load_image_spl(struct image *img)
 
 static int load_image(struct image *img)
 {
-	FILE *fp = fopen(img->filename, "rb");
-
-	if (!fp) {
-		fprintf(stderr, "Open %s failed: %m\n", img->filename);
-		return -1;
-	}
-
 	switch (img->image_type) {
 	case IMAGE_TYPE_SPL:
 		load_image_spl(img);
 		break;
 	default:
-		img->binary = load_alloc_file(fp, &img->length);
+		img->binary = load_alloc_file(img->filename, "rb",
+					      &img->length);
 		break;
 	}
-
-	fclose(fp);
 
 	return (img->binary && img->length > 0) ? 0 : -1;
 }
@@ -534,22 +520,13 @@ static int extract_packed_image(const char *packed_image, long length)
 
 static int extract_packed_image_file(const char *packed)
 {
-	FILE *f_packed_image = fopen(packed, "rb");
 	long l_packed_image = 0;
 
-	if (!f_packed_image) {
-		fprintf(stderr, "Open packed image %s failed: %m\n", packed);
+	char *packed_image = load_alloc_file(packed, "rb", &l_packed_image);
+	if (!packed_image)
 		return -1;
-	}
-
-	char *packed_image = load_alloc_file(f_packed_image, &l_packed_image);
-	if (!packed_image) {
-		fclose(f_packed_image);
-		return -1;
-	}
 
 	int ret = extract_packed_image(packed_image, l_packed_image);
-	fclose(f_packed_image);
 	free(packed_image);
 
 	return ret;
