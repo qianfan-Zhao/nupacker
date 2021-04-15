@@ -10,7 +10,7 @@
 #include <stdlib.h>
 #include <string.h>
 
-#define NUPACKER_VERSION	"1.01"
+#define NUPACKER_VERSION	"1.02"
 #define PACK_ALIGN		(64 * 1024)
 #define ALIGN(s, a)		(((s) + (a) - 1) / (a) * (a))
 #define ALIGNED_LENGTH(x)	ALIGN(x, PACK_ALIGN)
@@ -32,16 +32,19 @@ static void usage(void)
 {
 	fprintf(stderr, "nupacker -i pack.bin: Show packed image's information\n");
 	fprintf(stderr, "nupacker -ddr which_dir/ddr.ini\n");
-	fprintf(stderr, " -spl which_dir/u-boot-spl.bin@0,exec=0x200\n");
-	fprintf(stderr, " [-data which_dir/u-boot.bin@0x100000]\n");
-	fprintf(stderr, " [-data which_dir/uImage_dtb.bin@0x200000]\n");
-	fprintf(stderr, " [-data which_dir/rootfs.ubi@0x800000]\n");
-	fprintf(stderr, " -o which_dir/pack.bin: Pack images\n");
+	fprintf(stderr, "         -spl which_dir/u-boot-spl.bin@0,exec=0x200\n");
+	fprintf(stderr, "         [-data which_dir/u-boot.bin@0x100000]\n");
+	fprintf(stderr, "         [-data which_dir/uImage_dtb.bin@0x200000]\n");
+	fprintf(stderr, "         [-data which_dir/rootfs.ubi@0x800000]\n");
+	fprintf(stderr, "         -o which_dir/pack.bin: Pack images\n");
 	fprintf(stderr, "nupacker -e which_dir/pack.bin [-O dir]: Extract packed image\n");
 	fprintf(stderr, "nupacket -t ddr.ini [-o ddr.bin]:\n");
 	fprintf(stderr, "nupacket -t ddr.bin [-o ddr.ini]:\n");
 	fprintf(stderr, "  Translate ddr configuration between ini and bin\n");
 	fprintf(stderr, "  Write translated data to stdout default\n");
+	fprintf(stderr, "nupacker -g -ddr which_dir/ddr.ini\n");
+	fprintf(stderr, "            -spl which_dir/u-boot-spl.bin@0,exec=0x200\n");
+	fprintf(stderr, "            -o which_dir/u-boot-spl-ddr.bin: Glue ddr and uboot\n");
 	fprintf(stderr, "VERSION: %s\n", NUPACKER_VERSION);
 }
 
@@ -51,6 +54,7 @@ static void usage(void)
 static const char *opt_extract_file = NULL, *opt_ddr = NULL;
 static const char *opt_out_dir = NULL, *opt_out = NULL;
 static const char *opt_ddr_translate = NULL;
+static int opt_glue_ddr_spl = 0;
 static int opt_extract = 0;
 #define OUT_DIR (!opt_out_dir ? "." : opt_out_dir)
 
@@ -374,6 +378,9 @@ static int load_image_spl(struct image *img)
 
 static int load_image(struct image *img)
 {
+	img->binary = NULL;
+	img->length = 0;
+
 	switch (img->image_type) {
 	case IMAGE_TYPE_SPL:
 		load_image_spl(img);
@@ -584,6 +591,35 @@ static int pack_images(struct image *imgs, int img_num)
 	return 0;
 }
 
+static int glue_ddr_spl(struct image *imgs, int img_num)
+{
+	struct image *img_spl = imgs;
+	FILE *out;
+
+	if (img_num != 1 || img_spl->image_type != IMAGE_TYPE_SPL) {
+		fprintf(stderr, "wrong param for glue ddr and spl\n");
+		return -1;
+	} else if (load_image(img_spl) < 0) {
+		fprintf(stderr, "loading spl failed\n");
+		return -1;
+	}
+
+	out = fopen(opt_out, "wb+");
+	if (!out) {
+		fprintf(stderr, "open %s failed\n", opt_out);
+		return -1;
+	}
+
+	/* glue ddr and spl doesn't need pack spl header, skip it */
+	fwrite(img_spl->binary + sizeof(struct pack_spl_header),
+		1,
+		img_spl->length - sizeof(struct pack_spl_header),
+		out);
+	fclose(out);
+
+	return 0;
+}
+
 int main(int argc, char *argv[])
 {
 	struct image *imgs = malloc(sizeof(*imgs));
@@ -683,6 +719,9 @@ int main(int argc, char *argv[])
 			}
 			opt_ddr_translate = argv[++i];
 			break;
+		case 'g':
+			opt_glue_ddr_spl = 1;
+			break;
 		}
 	}
 
@@ -709,7 +748,11 @@ int main(int argc, char *argv[])
 			goto _exit;
 		}
 
-		ret = pack_images(imgs, img_num);
+		if (opt_glue_ddr_spl)
+			ret = glue_ddr_spl(imgs, img_num);
+		else
+			ret = pack_images(imgs, img_num);
+
 		goto _exit;
 	}
 
