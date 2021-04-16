@@ -42,9 +42,11 @@ static void usage(void)
 	fprintf(stderr, "nupacket -t ddr.bin [-o ddr.ini]:\n");
 	fprintf(stderr, "  Translate ddr configuration between ini and bin\n");
 	fprintf(stderr, "  Write translated data to stdout default\n");
-	fprintf(stderr, "nupacker -g -ddr which_dir/ddr.ini\n");
-	fprintf(stderr, "            -spl which_dir/u-boot-spl.bin@0,exec=0x200\n");
-	fprintf(stderr, "            -o which_dir/u-boot-spl-ddr.bin: Glue ddr and uboot\n");
+	fprintf(stderr, "nupacker -g\n");
+	fprintf(stderr, "         -ddr which_dir/ddr.ini\n");
+	fprintf(stderr, "         -spl which_dir/u-boot-spl.bin@0,exec=0x200\n");
+	fprintf(stderr, "         -o which_dir/u-boot-spl-ddr.bin\n");
+	fprintf(stderr, "  Glue ddr and uboot\n");
 	fprintf(stderr, "VERSION: %s\n", NUPACKER_VERSION);
 }
 
@@ -611,10 +613,7 @@ static int glue_ddr_spl(struct image *imgs, int img_num)
 	}
 
 	/* glue ddr and spl doesn't need pack spl header, skip it */
-	fwrite(img_spl->binary + sizeof(struct pack_spl_header),
-		1,
-		img_spl->length - sizeof(struct pack_spl_header),
-		out);
+	fwrite(img_spl->binary, 1, img_spl->length, out);
 	fclose(out);
 
 	return 0;
