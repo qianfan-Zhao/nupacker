@@ -10,7 +10,7 @@
 #include <stdlib.h>
 #include <string.h>
 
-#define NUPACKER_VERSION	"1.02"
+#define NUPACKER_VERSION	"1.03"
 #define PACK_ALIGN		(64 * 1024)
 #define ALIGN(s, a)		(((s) + (a) - 1) / (a) * (a))
 #define ALIGNED_LENGTH(x)	ALIGN(x, PACK_ALIGN)
@@ -42,9 +42,11 @@ static void usage(void)
 	fprintf(stderr, "nupacket -t ddr.bin [-o ddr.ini]:\n");
 	fprintf(stderr, "  Translate ddr configuration between ini and bin\n");
 	fprintf(stderr, "  Write translated data to stdout default\n");
-	fprintf(stderr, "nupacker -g -ddr which_dir/ddr.ini\n");
-	fprintf(stderr, "            -spl which_dir/u-boot-spl.bin@0,exec=0x200\n");
-	fprintf(stderr, "            -o which_dir/u-boot-spl-ddr.bin: Glue ddr and uboot\n");
+	fprintf(stderr, "nupacker -g [-TVN]\n");
+	fprintf(stderr, "         -ddr which_dir/ddr.ini\n");
+	fprintf(stderr, "         -spl which_dir/u-boot-spl.bin@0,exec=0x200\n");
+	fprintf(stderr, "         -o which_dir/u-boot-spl-ddr.bin\n");
+	fprintf(stderr, "  Glue ddr and uboot, TVN: add TVN header for eMMC\n");
 	fprintf(stderr, "VERSION: %s\n", NUPACKER_VERSION);
 }
 
@@ -55,6 +57,7 @@ static const char *opt_extract_file = NULL, *opt_ddr = NULL;
 static const char *opt_out_dir = NULL, *opt_out = NULL;
 static const char *opt_ddr_translate = NULL;
 static int opt_glue_ddr_spl = 0;
+static int opt_add_tvn = 0;
 static int opt_extract = 0;
 #define OUT_DIR (!opt_out_dir ? "." : opt_out_dir)
 
@@ -593,6 +596,8 @@ static int pack_images(struct image *imgs, int img_num)
 
 static int glue_ddr_spl(struct image *imgs, int img_num)
 {
+	uint8_t *p, tvn_header[4 * sizeof(uint32_t)] = { 0x20, 'T', 'V', 'N' };
+	uint32_t exec_addr, length, align;
 	struct image *img_spl = imgs;
 	FILE *out;
 
@@ -610,11 +615,26 @@ static int glue_ddr_spl(struct image *imgs, int img_num)
 		return -1;
 	}
 
+	/* TVN header:
+	 * uint32_t magic, exec_addr, length, 0xffffffff.
+	 * saved in little endian
+	 */
+	if (opt_add_tvn) {
+		p = tvn_header + sizeof(uint32_t); /* after magic */
+		align = 0xffffffff;
+		exec_addr = img_spl->exec_addr;
+		length = img_spl->length - sizeof(struct pack_spl_header);
+
+		put_u32_little_endian(p, exec_addr);
+		put_u32_little_endian(p, length);
+		put_u32_little_endian(p, align);
+
+		fwrite(tvn_header, 1, sizeof(tvn_header), out);
+	}
+
 	/* glue ddr and spl doesn't need pack spl header, skip it */
 	fwrite(img_spl->binary + sizeof(struct pack_spl_header),
-		1,
-		img_spl->length - sizeof(struct pack_spl_header),
-		out);
+		1, length, out);
 	fclose(out);
 
 	return 0;
@@ -721,6 +741,9 @@ int main(int argc, char *argv[])
 			break;
 		case 'g':
 			opt_glue_ddr_spl = 1;
+			break;
+		case 'T':
+			opt_add_tvn = 1;
 			break;
 		}
 	}
