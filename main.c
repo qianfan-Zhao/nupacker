@@ -9,6 +9,7 @@
 #include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
+#include <libgen.h>
 
 #define NUPACKER_VERSION	"1.02"
 #define PACK_ALIGN		(64 * 1024)
@@ -28,6 +29,14 @@
 				*p++ = ((u) >> 24) & 0xff;	\
 } while (0)
 
+#define MEDIA_TYPE_SRAM				0
+#define MEDIA_TYPE_NAND				3
+#define MEDIA_TYPE_EMMC				5
+#define MEDIA_TYPE_SPI				7
+#define MEDIA_TYPE_NOT_SELECTED			255
+
+#define EMMC_SECTOR_SIZE			512
+
 static void usage(void)
 {
 	fprintf(stderr, "nupacker -i pack.bin: Show packed image's information\n");
@@ -42,7 +51,7 @@ static void usage(void)
 	fprintf(stderr, "nupacket -t ddr.bin [-o ddr.ini]:\n");
 	fprintf(stderr, "  Translate ddr configuration between ini and bin\n");
 	fprintf(stderr, "  Write translated data to stdout default\n");
-	fprintf(stderr, "nupacker -g\n");
+	fprintf(stderr, "nupacker -g [-media=emmc ]\n");
 	fprintf(stderr, "         -ddr which_dir/ddr.ini\n");
 	fprintf(stderr, "         -spl which_dir/u-boot-spl.bin@0,exec=0x200\n");
 	fprintf(stderr, "         -o which_dir/u-boot-spl-ddr.bin\n");
@@ -56,6 +65,7 @@ static void usage(void)
 static const char *opt_extract_file = NULL, *opt_ddr = NULL;
 static const char *opt_out_dir = NULL, *opt_out = NULL;
 static const char *opt_ddr_translate = NULL;
+static int opt_media_type = MEDIA_TYPE_NOT_SELECTED;
 static int opt_glue_ddr_spl = 0;
 static int opt_extract = 0;
 #define OUT_DIR (!opt_out_dir ? "." : opt_out_dir)
@@ -333,7 +343,7 @@ struct pack_child_header {
 	uint32_t		reserved;
 };
 
-#define SPL_HEADER_MAGIC				0x4e565420
+#define SPL_HEADER_MAGIC				0x4e565420 /* TVN */
 
 struct pack_spl_header {
 	uint32_t		magic;
@@ -593,6 +603,56 @@ static int pack_images(struct image *imgs, int img_num)
 	return 0;
 }
 
+#define MMC_IMAGES_INFO_HEADER_WBU		0xAA554257
+#define MMC_IMAGES_INFO_HEADER_WBYC		0x63594257
+
+struct mmc_images_info_header {
+	uint32_t	magic_WBU;
+	uint32_t	n_images;
+	uint32_t	reserved;
+	uint32_t	magic_WBYC;
+};
+
+struct mmc_image_info {
+	uint32_t	img_type_number;
+	uint32_t	flash_offset;
+	uint32_t	exec;
+	uint32_t	next_flash_offset;
+	uint8_t		image_name[16];
+};
+
+static int file_add_mmc_image_info(FILE *fp, struct image *spl)
+{
+	struct mmc_images_info_header *mmc_images;
+	struct mmc_image_info *img_info;
+	uint8_t sector[EMMC_SECTOR_SIZE];
+
+	memset(sector, 0xff, sizeof(sector));
+	mmc_images = (struct mmc_images_info_header *)sector;
+	img_info = (struct mmc_image_info *)(sector + sizeof(*mmc_images));
+
+	mmc_images->magic_WBU = MMC_IMAGES_INFO_HEADER_WBU;
+	mmc_images->n_images = 1;
+	mmc_images->reserved = 0xffffffff;
+	mmc_images->magic_WBYC = MMC_IMAGES_INFO_HEADER_WBYC;
+
+	img_info->img_type_number = ((spl->image_type & 0xffff) << 16) | 0 /* img num */;
+	img_info->flash_offset = spl->location;
+	img_info->exec = spl->exec_addr;
+	img_info->next_flash_offset = spl->location +
+		(spl->length + EMMC_SECTOR_SIZE - 1) / EMMC_SECTOR_SIZE - 1;
+
+	/* Warning: If there is no null byte among the first n bytes of src, the
+	 * string placed in dest will not be null-terminated.
+	 */
+	img_info->image_name[sizeof(img_info->image_name) - 1] = '\0';
+	strncpy(img_info->image_name, basename(spl->filename),
+		sizeof(img_info->image_name) - 1);
+
+	fwrite(sector, 1, sizeof(sector), fp);
+	return 0;
+}
+
 static int glue_ddr_spl(struct image *imgs, int img_num)
 {
 	struct image *img_spl = imgs;
@@ -612,7 +672,15 @@ static int glue_ddr_spl(struct image *imgs, int img_num)
 		return -1;
 	}
 
-	/* glue ddr and spl doesn't need pack spl header, skip it */
+	switch (opt_media_type) {
+	case MEDIA_TYPE_EMMC:
+		/* emmc image info saved in offset 512, size is 512B,
+		 * spl saved in 1024
+		 */
+		file_add_mmc_image_info(out, img_spl);
+		break;
+	}
+
 	fwrite(img_spl->binary, 1, img_spl->length, out);
 	fclose(out);
 
@@ -720,6 +788,18 @@ int main(int argc, char *argv[])
 			break;
 		case 'g':
 			opt_glue_ddr_spl = 1;
+			break;
+		case 'm': /* -media=emmc */
+			if (!strcmp(&argv[i][7], "nand")) {
+				opt_media_type = MEDIA_TYPE_NAND;
+			} else if (!strcmp(&argv[i][7], "emmc")) {
+				opt_media_type = MEDIA_TYPE_EMMC;
+			} else if (!strcmp(&argv[i][7], "spi")) {
+				opt_media_type = MEDIA_TYPE_SPI;
+			} else {
+				fprintf(stderr, "invalid command opt: %s\n", argv[i]);
+				goto _exit;
+			}
 			break;
 		}
 	}
