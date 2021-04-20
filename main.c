@@ -11,7 +11,7 @@
 #include <string.h>
 #include <libgen.h>
 
-#define NUPACKER_VERSION	"1.02"
+#define NUPACKER_VERSION	"1.03"
 #define PACK_ALIGN		(64 * 1024)
 #define ALIGN(s, a)		(((s) + (a) - 1) / (a) * (a))
 #define ALIGNED_LENGTH(x)	ALIGN(x, PACK_ALIGN)
