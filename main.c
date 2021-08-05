@@ -150,6 +150,8 @@ static void usage(void)
 	fprintf(stderr, "         [-data which_dir/uImage_dtb.bin@0x200000]\n");
 	fprintf(stderr, "         [-data which_dir/rootfs.ubi@0x800000]\n");
 	fprintf(stderr, "         -o which_dir/pack.bin: Pack images\n");
+	fprintf(stderr, "nupacker -f nupacker.cfg -o which_dir/pack.bin\n");
+	fprintf(stderr, "  Loading images from config file and pack them.\n");
 	fprintf(stderr, "nupacker -E which_dir/pack.bin [-O dir]: Extract packed image\n");
 	fprintf(stderr, "nupacker -t ddr.ini [-o ddr.bin]:\n");
 	fprintf(stderr, "nupacker -t ddr.bin [-o ddr.ini]:\n");
@@ -166,9 +168,10 @@ static void usage(void)
 /*
  * Global variables used for parser main's command line params.
  */
-static const char *opt_extract_file = NULL, *opt_ddr = NULL;
+static const char *opt_extract_file = NULL;
 static const char *opt_out_dir = NULL, *opt_out = NULL;
 static const char *opt_ddr_translate = NULL;
+static char opt_ddr[128] = { 0 };
 static int opt_media_type = MEDIA_TYPE_NOT_SELECTED;
 static int opt_glue_ddr_spl = 0;
 static int opt_extract = 0;
@@ -988,11 +991,130 @@ static int glue_ddr_spl(struct image *imgs, int img_num)
 	return 0;
 }
 
+static int parser_images(int argc, char *argv[], struct image **imgs, int *img_num)
+{
+	struct image *img, *relloc_imgs = *imgs;
+	int resize;
+
+	for (int i = 0; i < argc; i++) {
+		img = &relloc_imgs[*img_num];
+		memset(img, 0, sizeof(*img));
+
+		if (argv[i][0] != '-') {
+			fprintf(stderr, "invaild argv: %s\n", argv[i]);
+			return -1;
+		}
+
+		switch (argv[i][1]) {
+		case 'd': /* -ddr, -data */
+		case 's': /* -spl */
+		case 'e': /* -env */
+			if (!argv[i + 1]) {
+				fprintf(stderr, "%s need a param\n", argv[i]);
+				return -1;
+			}
+
+			if (!strcmp(argv[i], "-ddr")) {
+				snprintf(opt_ddr, sizeof(opt_ddr), "%s", argv[++i]);
+				break;
+			} else if (!strcmp(argv[i], "-spl")) {
+				img->image_type = IMAGE_TYPE_SPL;
+			} else if (!strcmp(argv[i], "-data")) {
+				img->image_type = IMAGE_TYPE_DATA;
+			} else if (!strcmp(argv[i], "-env")) {
+				img->image_type = IMAGE_TYPE_ENV;
+			} else {
+				fprintf(stderr, "unknown param: %s\n", argv[i]);
+				return -1;
+			}
+
+			if (parse_image_param(argv[++i], img) == 0) {
+				/* prepare memory for the next image */
+				++(*img_num);
+				resize = sizeof(*img) * (*img_num + 1);
+
+				if (!(relloc_imgs = realloc(relloc_imgs, resize))) {
+					fprintf(stderr, "Realloc memory failed.\n");
+					return -1;
+				}
+
+				*imgs = relloc_imgs;
+			} else {
+				return -1;
+			}
+			break;
+		default:
+			fprintf(stderr, "unknown param: %s\n", argv[i]);
+			return -1;
+		}
+	}
+
+	return 0;
+}
+
+static void free_images(struct image *imgs, int img_num)
+{
+	struct image *img;
+	int n;
+
+	for (n = 0, img = &imgs[0]; n < img_num; img++, n++) {
+		if (img->binary && img->length > 0)
+			free(img->binary);
+	}
+	free(imgs);
+}
+
+
+static int loading_nupacker_config(const char *cfg, struct image **imgs, int *img_num)
+{
+	FILE *fp = fopen(cfg, "r");
+	int line_number = 1;
+
+	if (!fp) {
+		fprintf(stderr, "open %s failed: %m\n", cfg);
+		return -1;
+	}
+
+	while (1) {
+		char *p, line[1024] = { 0 }, *argv[32] = { NULL };
+		int len, argc = 0;
+
+		if (!fgets(line, sizeof(line) - 1, fp)) /* EOF */
+			break;
+
+		len = strlen(line);
+		if (line[len - 1] = '\n') {
+			line[len - 1] = '\0';
+			len--;
+		}
+
+		if (len < 1 || line[0] == '#') /* ignore blank and comments */
+			continue;
+
+		argv[argc++] = line;
+		while ((p = strchr(line, ' '))) {
+			*p = '\0';
+			argv[argc++] = ++p;
+		}
+
+		if (parser_images(argc, argv, imgs, img_num) < 0) {
+			fprintf(stderr, "parser %s: L%d failed: ", cfg, line_number);
+			for (int i = 0; i < argc; i++)
+				fprintf(stderr, "%s ", argv[i]);
+			fprintf(stderr, "\n");
+			return -1;
+		}
+
+		line_number++;
+	}
+
+	return 0;
+}
+
 int main(int argc, char *argv[])
 {
 	struct image *imgs = malloc(sizeof(*imgs));
-	struct image *new_img, *img = imgs;
-	int n, img_num = 0, need_ddr = 0;
+	int img_num = 0;
 	int ret = -1;
 
 	if (!imgs) {
@@ -1049,37 +1171,20 @@ int main(int argc, char *argv[])
 				goto _exit;
 			}
 
-			memset(img, 0, sizeof(*img));
+			if (parser_images(2, argv + i, &imgs, &img_num) < 0)
+				goto _exit;
 
-			if (!strcmp(argv[i], "-ddr")) {
-				opt_ddr = argv[++i];
-				break;
-			} else if (!strcmp(argv[i], "-spl")) {
-				/* SPL is glue u-boot-spl.bin and ddr */
-				img->image_type = IMAGE_TYPE_SPL;
-				need_ddr = 1;
-			} else if (!strcmp(argv[i], "-data")) {
-				img->image_type = IMAGE_TYPE_DATA;
-			} else if (!strcmp(argv[i], "-env")) {
-				img->image_type = IMAGE_TYPE_ENV;
-			} else {
-				fprintf(stderr, "Unknow param: %s\n\n", argv[i]);
+			i++;
+			break;
+
+		case 'f':
+			if (!argv[i + 1]) {
+				fprintf(stderr, "%s need a param\n", argv[i]);
 				goto _exit;
 			}
 
-			if (parse_image_param(argv[++i], img) < 0)
+			if (loading_nupacker_config(argv[++i], &imgs, &img_num) < 0)
 				goto _exit;
-
-			++img_num;
-			/* Prepare memory for next image */
-			int resize = sizeof(*img) * (img_num + 1);
-			if (!(new_img = realloc(imgs, resize))) {
-				fprintf(stderr, "Realloc memory failed.\n");
-				goto _exit;
-			}
-			imgs = new_img;
-			img = &imgs[img_num];
-
 			break;
 
 		case 't':
@@ -1121,6 +1226,17 @@ int main(int argc, char *argv[])
 	}
 
 	if (img_num > 0) {
+		int need_ddr = 0;
+
+		for (int i = 0; i < img_num; i++) {
+			struct image *img = &imgs[i];
+
+			if (img->image_type == IMAGE_TYPE_SPL) {
+				need_ddr = 1;
+				break;
+			}
+		}
+
 		if (!opt_out) {
 			fprintf(stderr, "Pack images should add -o param to "
 					"to select the target's name.\n");
@@ -1139,12 +1255,6 @@ int main(int argc, char *argv[])
 	}
 
 _exit:
-	for (n = 0, img = &imgs[0]; n < img_num; img++, n++) {
-		if (img->binary && img->length > 0)
-			free(img->binary);
-	}
-	free(imgs);
-
+	free_images(imgs, img_num);
 	return ret;
 }
-
