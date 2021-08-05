@@ -29,6 +29,108 @@
 				*p++ = ((u) >> 24) & 0xff;	\
 } while (0)
 
+static const unsigned int crctab32[] = {
+	0x00000000U, 0x77073096U, 0xee0e612cU, 0x990951baU, 0x076dc419U,
+	0x706af48fU, 0xe963a535U, 0x9e6495a3U, 0x0edb8832U, 0x79dcb8a4U,
+	0xe0d5e91eU, 0x97d2d988U, 0x09b64c2bU, 0x7eb17cbdU, 0xe7b82d07U,
+	0x90bf1d91U, 0x1db71064U, 0x6ab020f2U, 0xf3b97148U, 0x84be41deU,
+	0x1adad47dU, 0x6ddde4ebU, 0xf4d4b551U, 0x83d385c7U, 0x136c9856U,
+	0x646ba8c0U, 0xfd62f97aU, 0x8a65c9ecU, 0x14015c4fU, 0x63066cd9U,
+	0xfa0f3d63U, 0x8d080df5U, 0x3b6e20c8U, 0x4c69105eU, 0xd56041e4U,
+	0xa2677172U, 0x3c03e4d1U, 0x4b04d447U, 0xd20d85fdU, 0xa50ab56bU,
+	0x35b5a8faU, 0x42b2986cU, 0xdbbbc9d6U, 0xacbcf940U, 0x32d86ce3U,
+	0x45df5c75U, 0xdcd60dcfU, 0xabd13d59U, 0x26d930acU, 0x51de003aU,
+	0xc8d75180U, 0xbfd06116U, 0x21b4f4b5U, 0x56b3c423U, 0xcfba9599U,
+	0xb8bda50fU, 0x2802b89eU, 0x5f058808U, 0xc60cd9b2U, 0xb10be924U,
+	0x2f6f7c87U, 0x58684c11U, 0xc1611dabU, 0xb6662d3dU, 0x76dc4190U,
+	0x01db7106U, 0x98d220bcU, 0xefd5102aU, 0x71b18589U, 0x06b6b51fU,
+	0x9fbfe4a5U, 0xe8b8d433U, 0x7807c9a2U, 0x0f00f934U, 0x9609a88eU,
+	0xe10e9818U, 0x7f6a0dbbU, 0x086d3d2dU, 0x91646c97U, 0xe6635c01U,
+	0x6b6b51f4U, 0x1c6c6162U, 0x856530d8U, 0xf262004eU, 0x6c0695edU,
+	0x1b01a57bU, 0x8208f4c1U, 0xf50fc457U, 0x65b0d9c6U, 0x12b7e950U,
+	0x8bbeb8eaU, 0xfcb9887cU, 0x62dd1ddfU, 0x15da2d49U, 0x8cd37cf3U,
+	0xfbd44c65U, 0x4db26158U, 0x3ab551ceU, 0xa3bc0074U, 0xd4bb30e2U,
+	0x4adfa541U, 0x3dd895d7U, 0xa4d1c46dU, 0xd3d6f4fbU, 0x4369e96aU,
+	0x346ed9fcU, 0xad678846U, 0xda60b8d0U, 0x44042d73U, 0x33031de5U,
+	0xaa0a4c5fU, 0xdd0d7cc9U, 0x5005713cU, 0x270241aaU, 0xbe0b1010U,
+	0xc90c2086U, 0x5768b525U, 0x206f85b3U, 0xb966d409U, 0xce61e49fU,
+	0x5edef90eU, 0x29d9c998U, 0xb0d09822U, 0xc7d7a8b4U, 0x59b33d17U,
+	0x2eb40d81U, 0xb7bd5c3bU, 0xc0ba6cadU, 0xedb88320U, 0x9abfb3b6U,
+	0x03b6e20cU, 0x74b1d29aU, 0xead54739U, 0x9dd277afU, 0x04db2615U,
+	0x73dc1683U, 0xe3630b12U, 0x94643b84U, 0x0d6d6a3eU, 0x7a6a5aa8U,
+	0xe40ecf0bU, 0x9309ff9dU, 0x0a00ae27U, 0x7d079eb1U, 0xf00f9344U,
+	0x8708a3d2U, 0x1e01f268U, 0x6906c2feU, 0xf762575dU, 0x806567cbU,
+	0x196c3671U, 0x6e6b06e7U, 0xfed41b76U, 0x89d32be0U, 0x10da7a5aU,
+	0x67dd4accU, 0xf9b9df6fU, 0x8ebeeff9U, 0x17b7be43U, 0x60b08ed5U,
+	0xd6d6a3e8U, 0xa1d1937eU, 0x38d8c2c4U, 0x4fdff252U, 0xd1bb67f1U,
+	0xa6bc5767U, 0x3fb506ddU, 0x48b2364bU, 0xd80d2bdaU, 0xaf0a1b4cU,
+	0x36034af6U, 0x41047a60U, 0xdf60efc3U, 0xa867df55U, 0x316e8eefU,
+	0x4669be79U, 0xcb61b38cU, 0xbc66831aU, 0x256fd2a0U, 0x5268e236U,
+	0xcc0c7795U, 0xbb0b4703U, 0x220216b9U, 0x5505262fU, 0xc5ba3bbeU,
+	0xb2bd0b28U, 0x2bb45a92U, 0x5cb36a04U, 0xc2d7ffa7U, 0xb5d0cf31U,
+	0x2cd99e8bU, 0x5bdeae1dU, 0x9b64c2b0U, 0xec63f226U, 0x756aa39cU,
+	0x026d930aU, 0x9c0906a9U, 0xeb0e363fU, 0x72076785U, 0x05005713U,
+	0x95bf4a82U, 0xe2b87a14U, 0x7bb12baeU, 0x0cb61b38U, 0x92d28e9bU,
+	0xe5d5be0dU, 0x7cdcefb7U, 0x0bdbdf21U, 0x86d3d2d4U, 0xf1d4e242U,
+	0x68ddb3f8U, 0x1fda836eU, 0x81be16cdU, 0xf6b9265bU, 0x6fb077e1U,
+	0x18b74777U, 0x88085ae6U, 0xff0f6a70U, 0x66063bcaU, 0x11010b5cU,
+	0x8f659effU, 0xf862ae69U, 0x616bffd3U, 0x166ccf45U, 0xa00ae278U,
+	0xd70dd2eeU, 0x4e048354U, 0x3903b3c2U, 0xa7672661U, 0xd06016f7U,
+	0x4969474dU, 0x3e6e77dbU, 0xaed16a4aU, 0xd9d65adcU, 0x40df0b66U,
+	0x37d83bf0U, 0xa9bcae53U, 0xdebb9ec5U, 0x47b2cf7fU, 0x30b5ffe9U,
+	0xbdbdf21cU, 0xcabac28aU, 0x53b39330U, 0x24b4a3a6U, 0xbad03605U,
+	0xcdd70693U, 0x54de5729U, 0x23d967bfU, 0xb3667a2eU, 0xc4614ab8U,
+	0x5d681b02U, 0x2a6f2b94U, 0xb40bbe37U, 0xc30c8ea1U, 0x5a05df1bU,
+	0x2d02ef8dU
+};
+
+#define cpu_to_le32(a) (a)
+#define le32_to_cpu(a) (a)
+#define DO_CRC(x) crc = tab[(crc ^ (x)) & 255] ^ (crc >> 8)
+
+uint32_t crc32_no_comp(uint32_t crc, const uint8_t *buf, size_t len)
+{
+	const uint32_t *tab = crctab32;
+	const uint32_t *b =(const uint32_t *)buf;
+	size_t rem_len;
+
+	crc = cpu_to_le32(crc);
+	/* Align it */
+	if (((long)b) & 3 && len) {
+		uint8_t *p = (uint8_t *)b;
+		do {
+			DO_CRC(*p++);
+		} while ((--len) && ((long)p)&3);
+		b = (uint32_t *)p;
+	}
+
+	rem_len = len & 3;
+	len = len >> 2;
+	for (--b; len; --len) {
+		/* load data 32 bits wide, xor data 32 bits wide. */
+		crc ^= *++b; /* use pre increment for speed */
+		DO_CRC(0);
+		DO_CRC(0);
+		DO_CRC(0);
+		DO_CRC(0);
+	}
+	len = rem_len;
+	/* And the last few bytes */
+	if (len) {
+		uint8_t *p = (uint8_t *)(b + 1) - 1;
+		do {
+			DO_CRC(*++p); /* use pre increment for speed */
+		} while (--len);
+	}
+
+	return le32_to_cpu(crc);
+}
+
+static uint32_t crc32 (uint32_t crc, const uint8_t *p, size_t len)
+{
+	return crc32_no_comp(crc ^ 0xffffffffL, p, len) ^ 0xffffffffL;
+}
+
 #define MEDIA_TYPE_SRAM				0
 #define MEDIA_TYPE_NAND				3
 #define MEDIA_TYPE_EMMC				5
@@ -42,13 +144,14 @@ static void usage(void)
 	fprintf(stderr, "nupacker -i pack.bin: Show packed image's information\n");
 	fprintf(stderr, "nupacker -ddr which_dir/ddr.ini\n");
 	fprintf(stderr, "         -spl which_dir/u-boot-spl.bin@0,exec=0x200\n");
+	fprintf(stderr, "         -env which_dir/env.txt@0x80000,size=0x10000\n");
 	fprintf(stderr, "         [-data which_dir/u-boot.bin@0x100000]\n");
 	fprintf(stderr, "         [-data which_dir/uImage_dtb.bin@0x200000]\n");
 	fprintf(stderr, "         [-data which_dir/rootfs.ubi@0x800000]\n");
 	fprintf(stderr, "         -o which_dir/pack.bin: Pack images\n");
-	fprintf(stderr, "nupacker -e which_dir/pack.bin [-O dir]: Extract packed image\n");
-	fprintf(stderr, "nupacket -t ddr.ini [-o ddr.bin]:\n");
-	fprintf(stderr, "nupacket -t ddr.bin [-o ddr.ini]:\n");
+	fprintf(stderr, "nupacker -E which_dir/pack.bin [-O dir]: Extract packed image\n");
+	fprintf(stderr, "nupacker -t ddr.ini [-o ddr.bin]:\n");
+	fprintf(stderr, "nupacker -t ddr.bin [-o ddr.ini]:\n");
 	fprintf(stderr, "  Translate ddr configuration between ini and bin\n");
 	fprintf(stderr, "  Write translated data to stdout default\n");
 	fprintf(stderr, "nupacker -g [-media=emmc ]\n");
@@ -263,15 +366,17 @@ struct image {
 	char			filename[FILENAME_MAX];
 	char			*binary;
 	long			length;
+	long			partition_size;
 };
 
 static int parse_image_param(const char *param, struct image *img)
 {
-	char *at, *exec, *endp = NULL;
-	uint32_t location, exec_addr;
+	char *at, *exec, *size, *endp = NULL;
+	uint32_t location, exec_addr, sz;
 
 	/* which_dir/u-boot-spl.bin@0,exec=0x200 or
-	 * which_dir/u-boot.bin@0x100000
+	 * which_dir/u-boot.bin@0x100000 or
+	 * which_dir/env.txt@0x80000,size=0x10000
 	 */
 	if (!(at = strstr(param, "@"))) {
 		fprintf(stderr, "Please input the image's location\n");
@@ -286,11 +391,20 @@ static int parse_image_param(const char *param, struct image *img)
 
 	if ((exec = strstr(param, "exec="))) {
 		exec_addr = (uint32_t)strtoul(exec + 5, &endp, 16);
-		if (!endp != '\0') {
+		if (*endp != '\0') {
 			fprintf(stderr, "Parse exec failed: %s\n", param);
 			return -1;
 		}
 		img->exec_addr = exec_addr;
+	}
+
+	if ((size = strstr(param, "size="))) {
+		sz = (uint32_t)strtoul(size + 5, &endp, 16);
+		if (*endp != '\0') {
+			fprintf(stderr, "Parse size failed: %s\n", param);
+			return -1;
+		}
+		img->partition_size = sz;
 	}
 
 	for (int i = 0; i < at - param; i++)
@@ -388,6 +502,72 @@ static int load_image_spl(struct image *img)
 	return 0;
 }
 
+/*
+ * loading env.txt and convert to u-boot env binary format.
+ */
+static int load_image_env(struct image *img)
+{
+	FILE *fp = fopen(img->filename, "r");
+	uint8_t *crc, *env, *p;
+	uint32_t c32;
+
+	if (!fp) {
+		fprintf(stderr, "Open %s failed: %m\n", img->filename);
+		return -1;
+	}
+
+	img->binary = malloc(img->partition_size);
+	if (!img->binary) {
+		fprintf(stderr, "alloc memory for env failed: size = %ld\n",
+			img->partition_size);
+		fclose(fp);
+		return -1;
+	}
+
+	crc = (uint8_t *)img->binary;
+	p = env = (uint8_t *)(img->binary + sizeof(c32));
+	memset(img->binary, 0, img->partition_size);
+
+	while (1) {
+		char line[16384] = { 0 };
+		int line_ending = 1;
+		int n;
+
+		if (!fgets(line, sizeof(line) - 1, fp))
+			break;
+
+		n = strlen(line);
+		/* skip blank line */
+		if (n == 1 && line[0] == '\n')
+			continue;
+
+		/* make sure env format is linux style, we don't care '\r' */
+		if (line[n - 1] == '\n') {
+			line[n - 1] = '\0';
+			n--;
+		}
+
+		/* replace string "\n" to '\n' */
+		if (n >= 2 && line[n - 2] == '\\' && line[n - 1] == 'n') {
+			line[n - 2] = '\n';
+			line_ending = 0;
+			n--;
+		}
+
+		/* copy lines and adding a '\0' */
+		memcpy(p, line, n);
+		p += n;
+		p += line_ending;
+	}
+
+	c32 = crc32(0, env, img->partition_size - sizeof(c32));
+	put_u32_little_endian(crc, c32);
+	img->length = img->partition_size;
+
+	fclose(fp);
+	return 0;
+}
+
 static int load_image(struct image *img)
 {
 	img->binary = NULL;
@@ -396,6 +576,13 @@ static int load_image(struct image *img)
 	switch (img->image_type) {
 	case IMAGE_TYPE_SPL:
 		load_image_spl(img);
+		break;
+	case IMAGE_TYPE_ENV:
+		if (!img->partition_size) {
+			fprintf(stderr, "Partition ENV's size is not defined.\n");
+			return -1;
+		}
+		load_image_env(img);
 		break;
 	default:
 		img->binary = load_alloc_file(img->filename, "rb",
@@ -460,6 +647,58 @@ static int save_child(struct pack_child_header *child)
 	return 0;
 }
 
+static int uboot_env_is_valid(const uint8_t *e, size_t len)
+{
+	uint32_t c32 = u32_little_endian(e[0], e[1], e[2], e[3]);
+	uint32_t c;
+
+	c = crc32(0, e + sizeof(c), len - sizeof(c));
+	return c == c32;
+}
+
+static int save_child_env(struct pack_child_header *child)
+{
+	uint8_t *env = (uint8_t *)(child + 1), *data = env + sizeof(uint32_t);
+	char name[32] = { 0 };
+	int len = 0;
+	FILE *fp;
+
+	if (!uboot_env_is_valid(env, child->file_length)) {
+		fprintf(stderr, "Waring: ENV is bad, droping...\n");
+		return 0;
+	}
+
+	snprintf(name, sizeof(name), "0x%x.env", child->location);
+	fp = fopen(name, "w+");
+	if (!fp) {
+		fprintf(stderr, "Open %s failed: %m\n", name);
+		return -1;
+	}
+
+	while ((len = strlen(data)) > 0) {
+		int esc_newline = 0;
+		char *p = data;
+		char *next;
+
+		while ((next = strchr(p, '\n'))) {
+			/* replace '\n' in this string line to "\n" */
+			*next = '\0';
+
+			fprintf(fp, "%s\\n\n", p);
+			p = next + 1;
+		}
+		fprintf(fp, "%s\n", p);
+
+		/* skip string and '\0' */
+		data += len;
+		data += 1;
+	}
+
+	fclose(fp);
+
+	return 0;
+}
+
 static int extract_child(struct pack_child_header *child)
 {
 	struct pack_spl_header *spl = (struct pack_spl_header *)(child + 1);
@@ -481,8 +720,12 @@ static int extract_child(struct pack_child_header *child)
 			str_img_type[child->image_type],
 			child->location, spl->exe_addr, spl_length);
 
-		if (save_child_spl(spl, ddr_length, spl_length) < 0)
-			return -1;
+		return save_child_spl(spl, ddr_length, spl_length);
+	case IMAGE_TYPE_ENV:
+		printf("Found %s @ 0x%08x, size = %ld\n",
+			str_img_type[child->image_type], child->location,
+			(long)child->file_length);
+		return save_child_env(child);
 		break;
 	default:
 		printf("Found %s @ 0x%08x, size = %ld\n",
@@ -728,11 +971,10 @@ int main(int argc, char *argv[])
 			}
 			break;
 
-		case 'e':
+		case 'E':
 			opt_extract_file = argv[++i];
 			opt_extract = 1;
 			break;
-
 		case 'o':
 			opt_out = argv[++i];
 			break;
@@ -743,6 +985,7 @@ int main(int argc, char *argv[])
 
 		case 'd': /* -ddr, -data */
 		case 's': /* -spl */
+		case 'e': /* -env */
 			if (!argv[i + 1]) {
 				fprintf(stderr, "%s need a param\n", argv[i]);
 				goto _exit;
@@ -759,6 +1002,8 @@ int main(int argc, char *argv[])
 				need_ddr = 1;
 			} else if (!strcmp(argv[i], "-data")) {
 				img->image_type = IMAGE_TYPE_DATA;
+			} else if (!strcmp(argv[i], "-env")) {
+				img->image_type = IMAGE_TYPE_ENV;
 			} else {
 				fprintf(stderr, "Unknow param: %s\n\n", argv[i]);
 				goto _exit;

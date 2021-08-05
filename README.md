@@ -34,7 +34,7 @@ $ nupacker -spl u-boot-spl.bin@0,exec=0x200 \
 Example 2: Unpack
 
 ```
-$ ./nupacker -e 20190703.bin -O raw 
+$ ./nupacker -E 20190703.bin -O raw
 Found DDR configures, size = 384
 Found SPL  @ 0x00000000, exec = 0x00000200, size = 17436
 Found DATA @ 0x00100000, size = 395200
