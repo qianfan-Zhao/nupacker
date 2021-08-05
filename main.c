@@ -298,25 +298,21 @@ static int translate_ddr_ini2bin(const char *f_ini, const char *f_bin)
 	return ret;
 }
 
-static int translate_ddr_bin2ini(const char *f_bin, const char *f_ini)
+static int _translate_ddr_bin2ini(const uint8_t *bin, long length, const char *f_ini)
 {
 	FILE *fp_ini = !f_ini ? stdout : fopen(f_ini, "w+");
 	int i = 0, items = 0, ret = -1;
-	long length = 0;
-	char *p, *bin;
+	const char *p;
 
 	if (!fp_ini) {
 		fprintf(stderr, "Open/Create %s failed: %m", f_ini);
 		return ret;
 	}
 
-	if (!(bin = load_alloc_file(f_bin, "rb", &length)))
-		goto _close;
-
 	uint32_t header = u32_little_endian(bin[0], bin[1], bin[2], bin[3]);
 	if (header != ddr_bin_header) {
 		fprintf(stderr, "Invalid header: %X\n", header);
-		goto _free;
+		goto _close;
 	}
 
 	items = u32_little_endian(bin[4], bin[5], bin[6], bin[7]);
@@ -324,7 +320,7 @@ static int translate_ddr_bin2ini(const char *f_bin, const char *f_ini)
 	if (l > length) {
 		fprintf(stderr, "Length too larger: %X%X%X%X\n", bin[4],
 				bin[5], bin[6], bin[7]);
-		goto _free;
+		goto _close;
 	}
 
 	for (i = 0, p = bin + 8; i < items; i++, p += 8) {
@@ -335,13 +331,24 @@ static int translate_ddr_bin2ini(const char *f_bin, const char *f_ini)
 	}
 	ret = 0;
 
-_free:
-	free(bin);
 _close:
-	if (f_ini)
-		fclose(fp_ini);
-
+	fclose(fp_ini);
 	return ret;
+}
+
+static int translate_ddr_bin2ini(const char *in, const char *out)
+{
+	long length = 0;
+	uint8_t *bin;
+
+	bin = load_alloc_file(in, "rb", &length);
+	if (bin) {
+		int ret = _translate_ddr_bin2ini(bin, length, out);
+		free(bin);
+		return ret;
+	}
+
+	return -1;
 }
 
 static int translate_ddr(const char *in, const char *out)
@@ -596,33 +603,45 @@ static int load_image(struct image *img)
 /*
  * Save the unextraced spl into file.
  */
+static int save_child_spl_ddr(const uint8_t *ddr, int ddr_length)
+{
+	char file[128] = { 0 };
+
+	snprintf(file, sizeof(file), "%s/ddr.ini", OUT_DIR);
+
+	return _translate_ddr_bin2ini(ddr, ddr_length, file);
+}
+
+static int save_child_spl_spl(const uint8_t *spl, int spl_length)
+{
+	char file[128] = { 0 };
+	FILE *fp;
+
+	snprintf(file, sizeof(file), "%s/spl.bin", OUT_DIR);
+
+	fp = fopen(file, "wb+");
+	if (!fp) {
+		fprintf(stderr, "Open %s failed: %m\n", file);
+		return -1;
+	}
+
+	fwrite(spl, 1, spl_length, fp);
+	fclose(fp);
+
+	return 0;
+}
+
 static int save_child_spl(struct pack_spl_header *spl, int ddr_length,
 			  int spl_length)
 {
 	const char *data = (const char *)(spl + 1);
-	char save_file[128];
 
-	if (opt_extract) {
-		const char *file[2] = {"ddr.bin",  "0x0.bin"};
-		const int length[2] = {ddr_length, spl_length};
-
-		for (int i = 0; i < 2; i++) {
-			snprintf(save_file, sizeof(save_file), "%s/%s",
-				 OUT_DIR, file[i]);
-
-			FILE *fp = fopen(save_file, "wb+");
-			if (!fp) {
-				fprintf(stderr, "Open %s failed: %m\n", save_file);
-				return -1;
-			}
-			fwrite(data, 1, length[i], fp);
-			fclose(fp);
-
-			data += length[i];
-		}
+	if (!save_child_spl_ddr(data, ddr_length)) {
+		if (!save_child_spl_spl(data + ddr_length, spl_length))
+			return 0;
 	}
 
-	return 0;
+	return -1;
 }
 
 static int save_child(struct pack_child_header *child)
