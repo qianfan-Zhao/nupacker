@@ -12,10 +12,15 @@
 #include <string.h>
 #include <libgen.h>
 
-#define NUPACKER_VERSION	"1.03"
+#define NUPACKER_VERSION	"1.04"
 #define PACK_ALIGN		(64 * 1024)
 #define ALIGN(s, a)		(((s) + (a) - 1) / (a) * (a))
 #define ALIGNED_LENGTH(x)	ALIGN(x, PACK_ALIGN)
+
+/* pre-declares */
+struct image;
+static int load_image_env(struct image *img);
+static int uboot_env_is_valid(const uint8_t *e, size_t len);
 
 #define u32_little_endian(a, b, c, d) ( 			\
 				(((a) & 0xff) <<  0) |		\
@@ -143,25 +148,28 @@ static uint32_t crc32 (uint32_t crc, const uint8_t *p, size_t len)
 static void usage(void)
 {
 	fprintf(stderr, "nupacker -i pack.bin: Show packed image's information\n");
-	fprintf(stderr, "nupacker -ddr which_dir/ddr.ini\n");
+	fprintf(stderr, "nupacker -pack\n");
+	fprintf(stderr, "         -ddr which_dir/ddr.ini\n");
 	fprintf(stderr, "         -spl which_dir/u-boot-spl.bin@0,exec=0x200\n");
 	fprintf(stderr, "         -env which_dir/env.txt@0x80000,size=0x10000\n");
 	fprintf(stderr, "         [-data which_dir/u-boot.bin@0x100000]\n");
 	fprintf(stderr, "         [-data which_dir/uImage_dtb.bin@0x200000]\n");
 	fprintf(stderr, "         [-data which_dir/rootfs.ubi@0x800000]\n");
 	fprintf(stderr, "         -o which_dir/pack.bin: Pack images\n");
-	fprintf(stderr, "nupacker -f nupacker.cfg -o which_dir/pack.bin\n");
+	fprintf(stderr, "nupacker -pack -f nupacker.cfg -o which_dir/pack.bin\n");
 	fprintf(stderr, "  Loading images from config file and pack them.\n");
 	fprintf(stderr, "nupacker -E which_dir/pack.bin [-O dir]: Extract packed image\n");
-	fprintf(stderr, "nupacker -t ddr.ini [-o ddr.bin]:\n");
-	fprintf(stderr, "nupacker -t ddr.bin [-o ddr.ini]:\n");
-	fprintf(stderr, "  Translate ddr configuration between ini and bin\n");
-	fprintf(stderr, "  Write translated data to stdout default\n");
 	fprintf(stderr, "nupacker -g [-media=emmc ]\n");
 	fprintf(stderr, "         -ddr which_dir/ddr.ini\n");
 	fprintf(stderr, "         -spl which_dir/u-boot-spl.bin@0,exec=0x200\n");
 	fprintf(stderr, "         -o which_dir/u-boot-spl-ddr.bin\n");
 	fprintf(stderr, "  Glue ddr and uboot\n");
+	fprintf(stderr, "nupacker -ddr ddr.ini/ddr.bin [-o outfile]:\n");
+	fprintf(stderr, "  Translate ddr configuration between ini and bin\n");
+	fprintf(stderr, "  Write translated data to stdout default\n");
+	fprintf(stderr, "nupacker -env env.bin/env.txt/env.env [-o outfile]:\n");
+	fprintf(stderr, "  Translate env between bin and txt\n");
+	fprintf(stderr, "  Write translated data to stdout default\n");
 	fprintf(stderr, "VERSION: %s\n", NUPACKER_VERSION);
 }
 
@@ -170,11 +178,11 @@ static void usage(void)
  */
 static const char *opt_extract_file = NULL;
 static const char *opt_out_dir = NULL, *opt_out = NULL;
-static const char *opt_ddr_translate = NULL;
 static char opt_ddr[128] = { 0 };
 static int opt_media_type = MEDIA_TYPE_NOT_SELECTED;
 static int opt_glue_ddr_spl = 0;
-static int opt_extract = 0;
+static int opt_ignore_env_crc = 0;
+static int opt_extract = 0, opt_pack = 0;
 #define OUT_DIR (!opt_out_dir ? "." : opt_out_dir)
 
 static long file_length(FILE *fp)
@@ -209,6 +217,18 @@ static char *load_alloc_file(const char *filename, const char *flag, long *lengt
 _done:
 	fclose(fp);
 	return m;
+}
+
+static int check_file_suffix(const char *file, const char *suffix)
+{
+	if (strlen(file) > strlen(suffix)) {
+		const char *s = &file[strlen(file) - strlen(suffix)];
+
+		if (!strncmp(s, suffix, strlen(suffix)))
+			return 0;
+	}
+
+	return -1;
 }
 
 /*
@@ -357,14 +377,10 @@ static int translate_ddr_bin2ini(const char *in, const char *out)
 
 static int translate_ddr(const char *in, const char *out)
 {
-	const char *suffix = &in[strlen(in) - strlen(".bin")];
-
-	if (strlen(in) > strlen("1.bin")) {
-		if (!strncmp(suffix, ".bin", 4))
-			return translate_ddr_bin2ini(in, out);
-		else if (!strncmp(suffix, ".ini", 4))
-			return translate_ddr_ini2bin(in, out);
-	}
+	if (!check_file_suffix(in, ".bin"))
+		return translate_ddr_bin2ini(in, out);
+	else if (!check_file_suffix(in, "ini"))
+		return translate_ddr_ini2bin(in, out);
 
 	fprintf(stderr, "Unknow ddr config file type: %s\n", in);
 	return -1;
@@ -384,20 +400,21 @@ static int parse_image_param(const char *param, struct image *img)
 {
 	char *at, *exec, *size, *endp = NULL;
 	uint32_t location, exec_addr, sz;
+	const char *filename_endp;
 
 	/* which_dir/u-boot-spl.bin@0,exec=0x200 or
 	 * which_dir/u-boot.bin@0x100000 or
-	 * which_dir/env.txt@0x80000,size=0x10000
+	 * which_dir/env.txt@0x80000,size=0x10000 or
+	 * which_dir/env.txt,size=65536
 	 */
-	if (!(at = strstr(param, "@"))) {
-		fprintf(stderr, "Please input the image's location\n");
-		return -1;
-	}
-
-	location = (uint32_t)strtoul(at + 1, &endp, 16);
-	if (*endp != '\0' && *endp != ',') {
-		fprintf(stderr, "Parse location failed: %s\n", param);
-		return -1;
+	at = strstr(param, "@");
+	if (at) {
+		location = (uint32_t)strtoul(at + 1, &endp, 16);
+		if (*endp != '\0' && *endp != ',') {
+			fprintf(stderr, "Parse location failed: %s\n", param);
+			return -1;
+		}
+		img->location = location;
 	}
 
 	if ((exec = strstr(param, "exec="))) {
@@ -410,7 +427,8 @@ static int parse_image_param(const char *param, struct image *img)
 	}
 
 	if ((size = strstr(param, "size="))) {
-		sz = (uint32_t)strtoul(size + 5, &endp, 16);
+		/* auto detect dec or hex format */
+		sz = (uint32_t)strtoul(size + 5, &endp, 0);
 		if (*endp != '\0') {
 			fprintf(stderr, "Parse size failed: %s\n", param);
 			return -1;
@@ -418,11 +436,105 @@ static int parse_image_param(const char *param, struct image *img)
 		img->partition_size = sz;
 	}
 
-	for (int i = 0; i < at - param; i++)
+	/* copy filename */
+	if (at)
+		filename_endp = at;
+	else if (strstr(param, ","))
+		filename_endp = strstr(param, ",");
+	else
+		filename_endp = param + strlen(param);
+
+	for (int i = 0; i < filename_endp - param; i++)
 		img->filename[i] = param[i];
-	img->location = location;
 
 	return 0;
+}
+
+static int saveenv_bin2txt(uint8_t *env, const char *outfile)
+{
+	uint8_t *data = env + sizeof(uint32_t); /* skip CRC */
+	FILE *fp = stdout;
+	int len;
+
+	if (outfile) {
+		fp = fopen(outfile, "w+");
+		if (!fp) {
+			fprintf(stderr, "Open %s for w+ failed: %m\n", outfile);
+			return -1;
+		}
+	}
+
+	while ((len = strlen(data)) > 0) {
+		int esc_newline = 0;
+		char *p = data;
+		char *next;
+
+		while ((next = strchr(p, '\n'))) {
+			/* replace '\n' in this string line to "\n" */
+			*next = '\0';
+
+			fprintf(fp, "%s\\n\n", p);
+			p = next + 1;
+		}
+		fprintf(fp, "%s\n", p);
+
+		/* skip string and '\0' */
+		data += len;
+		data += 1;
+	}
+
+	fclose(fp);
+
+	return 0;
+}
+
+static int translate_env_bin2txt(struct image *env, const char *out)
+{
+	env->binary = load_alloc_file(env->filename, "rb", &env->length);
+	if (!env->binary)
+		return -1;
+
+	if (!opt_ignore_env_crc) {
+		if (!uboot_env_is_valid(env->binary, env->length)) {
+			fprintf(stderr, "ENV checksum doesn't match\n");
+			return -1;
+		}
+	}
+
+	return saveenv_bin2txt(env->binary, out);
+}
+
+static int translate_env_txt2bin(struct image *env, const char *out)
+{
+	int ret = load_image_env(env);
+	FILE *fp = stdout;
+
+	if (ret < 0)
+		return ret;
+
+	if (out) {
+		fp = fopen(out, "wb+");
+		if (!fp) {
+			fprintf(stderr, "Open %s for wb+ failed\n", out);
+			return -1;
+		}
+	}
+
+	fwrite(env->binary, env->length, 1, fp);
+	return 0;
+}
+
+static int translate_image_env(struct image *env, const char *out)
+{
+	const char *name = env->filename;
+
+	if (!check_file_suffix(name, ".bin") || !check_file_suffix(name, ".img"))
+		return translate_env_bin2txt(env, out);
+	else if (!check_file_suffix(name, ".txt") || !check_file_suffix(name, ".env"))
+		return translate_env_txt2bin(env, out);
+
+	fprintf(stderr, "Unknow env config file type: %s\n", name);
+	return -1;
 }
 
 /*
@@ -709,48 +821,19 @@ static int uboot_env_is_valid(const uint8_t *e, size_t len)
 
 static int save_child_env(struct pack_child_header *child)
 {
-	uint8_t *env = (uint8_t *)(child + 1), *data = env + sizeof(uint32_t);
+	uint8_t *env = (uint8_t *)(child + 1);
 	char name[32] = { 0 };
-	int len = 0;
-	FILE *fp;
 
 	if (!uboot_env_is_valid(env, child->file_length)) {
 		fprintf(stderr, "Waring: ENV is bad, droping...\n");
 		return 0;
 	}
 
-	snprintf(name, sizeof(name), "0x%x.env", child->location);
+	snprintf(name, sizeof(name), "%s/0x%x.env", OUT_DIR, child->location);
 	nupacker_config_file_append(1, "-env %s@0x%x,size=0x%x\n",
 				    name, child->location, child->file_length);
 
-	fp = fopen(name, "w+");
-	if (!fp) {
-		fprintf(stderr, "Open %s failed: %m\n", name);
-		return -1;
-	}
-
-	while ((len = strlen(data)) > 0) {
-		int esc_newline = 0;
-		char *p = data;
-		char *next;
-
-		while ((next = strchr(p, '\n'))) {
-			/* replace '\n' in this string line to "\n" */
-			*next = '\0';
-
-			fprintf(fp, "%s\\n\n", p);
-			p = next + 1;
-		}
-		fprintf(fp, "%s\n", p);
-
-		/* skip string and '\0' */
-		data += len;
-		data += 1;
-	}
-
-	fclose(fp);
-
-	return 0;
+	return saveenv_bin2txt(env, name);
 }
 
 static int extract_child(struct pack_child_header *child)
@@ -991,6 +1074,31 @@ static int glue_ddr_spl(struct image *imgs, int img_num)
 	return 0;
 }
 
+static int translate_images(struct image *imgs, int img_num)
+{
+	for (int i = 0; i < img_num; i++) {
+		struct image *img = &imgs[i];
+		int ret = -1;
+
+		if (img->image_type != IMAGE_TYPE_ENV) {
+			fprintf(stderr, "Waring: doesn't support translate %s(type: %d)\n",
+				img->filename, img->image_type);
+			continue;
+		}
+
+		switch (img->image_type) {
+		case IMAGE_TYPE_ENV:
+			ret = translate_image_env(img, opt_out);
+			break;
+		}
+
+		if (ret < 0)
+			return ret;
+	}
+
+	return 0;
+}
+
 static int parser_images(int argc, char *argv[], struct image **imgs, int *img_num)
 {
 	struct image *img, *relloc_imgs = *imgs;
@@ -1143,12 +1251,20 @@ int main(int argc, char *argv[])
 			usage();
 			goto _exit;
 
-		case 'i':
-			opt_extract = 0;
-			if (argv[++i]) {
-				ret = extract_packed_image_file(argv[i]);
-				goto _exit;
+		case 'i': /* -i or -ignore-env-crc */
+			if (!strcmp(argv[i], "-i")) {
+				opt_extract = 0;
+				if (argv[++i]) {
+					ret = extract_packed_image_file(argv[i]);
+					goto _exit;
+				}
+			} else {
+				opt_ignore_env_crc = 1;
 			}
+			break;
+
+		case 'p':
+			opt_pack = 1;
 			break;
 
 		case 'E':
@@ -1187,13 +1303,6 @@ int main(int argc, char *argv[])
 				goto _exit;
 			break;
 
-		case 't':
-			if (!argv[i + 1]) {
-				fprintf(stderr, "%s need a param\n", argv[i]);
-				goto _exit;
-			}
-			opt_ddr_translate = argv[++i];
-			break;
 		case 'g':
 			opt_glue_ddr_spl = 1;
 			break;
@@ -1212,8 +1321,15 @@ int main(int argc, char *argv[])
 		}
 	}
 
-	if (opt_ddr_translate) {
-		ret = translate_ddr(opt_ddr_translate, opt_out);
+	if (!opt_pack && !opt_extract) {
+		/* try auto translate images */
+		if (opt_ddr[0] != '\0') {
+			ret = translate_ddr(opt_ddr, opt_out);
+		} if (img_num > 0) {
+			ret = translate_images(imgs, img_num);
+		} else {
+			ret = 0;
+		}
 		goto _exit;
 	}
 
@@ -1234,6 +1350,10 @@ int main(int argc, char *argv[])
 			if (img->image_type == IMAGE_TYPE_SPL) {
 				need_ddr = 1;
 				break;
+			} else if (img->location == 0) {
+				fprintf(stderr, "image %s doesn't has location attr\n",
+					img->filename);
+				goto _exit;
 			}
 		}
 
