@@ -456,6 +456,11 @@ static int saveenv_bin2txt(uint8_t *env, const char *outfile)
 	FILE *fp = stdout;
 	int len;
 
+	if (data[0] == 0 || data[0] == 1) {
+		/* skip env flags: active/obsolete flags ENVF_REDUND_ */
+		data++;
+	}
+
 	if (outfile) {
 		fp = fopen(outfile, "w+");
 		if (!fp) {
